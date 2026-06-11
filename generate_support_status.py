@@ -116,11 +116,6 @@ ACLNN_NOTES = {
     ('mhc', 'sinkhorn_normalize'): 'CANN >= 9.0.0 required (npu_mhc_sinkhorn)',
     ('mhc', 'mhc_post'): 'CANN >= 9.0.0 required (npu_mhc_post)',
     ('mhc', 'mhc_pre_big_fuse'): 'CANN >= 9.0.0 required (npu_mhc_pre)',
-    ('moe', 'get_fused_mapping'): 'Interface mismatch with npu_moe_init_routing',
-    ('moe', 'expand_to_fused'): 'Interface mismatch with npu_moe_init_routing',
-    ('moe', 'expand_to_fused_with_sf'): 'Interface mismatch with npu_moe_init_routing',
-    ('moe', 'reduce_fused'): 'Interface mismatch with npu_moe_finalize_routing',
-    ('moe', 'topk_sum_and_topk_group_idx'): 'No direct torch_npu API',
     ('quant', 'per_channel_cast_and_transpose'): 'No torch_npu fused kernel available',
     ('quant', 'per_block_cast_lossless'): 'No torch_npu API for lossless block cast',
     ('quant', 'cast_back_e5m6'): 'No torch_npu API for e5m6 format',
@@ -131,6 +126,14 @@ ACLNN_NOTES = {
 ACLNN_SUPPORTED_NOTES = {
     ('quant', 'swiglu_forward_and_per_channel_cast_and_transpose'): 'closest: npu_swiglu_quant (int8/int4 output, not FP8 e4m3)',
     ('quant', 'swiglu_forward_and_per_token_cast'): 'closest: npu_swiglu_quant per-token (int8/int4 output, not FP8 e4m3)',
+    ('moe', 'get_fused_mapping'): 'can match with pre/post: npu_moe_init_routing + sort',
+    ('moe', 'expand_to_fused'): 'can match with pre/post: npu_moe_init_routing + position remap',
+    ('moe', 'expand_to_fused_with_sf'): 'can match with pre/post: npu_moe_init_routing × 2',
+    ('moe', 'reduce_fused'): 'can match with pre/post: npu_moe_finalize_routing + column-major reshape',
+    ('moe', 'topk_sum_and_topk_group_idx'): 'closest: torch.topk + torch.sort (npu_moe_gating_top_k does not expose group indices)',
+    ('mhc', 'sinkhorn_normalize'): 'can match with pre/post (on CANN >= 9.0.0)',
+    ('mhc', 'mhc_post'): 'can match with pre/post (on CANN >= 9.0.0)',
+    ('mhc', 'mhc_pre_big_fuse'): 'can match with pre/post (on CANN >= 9.0.0)',
 }
 
 

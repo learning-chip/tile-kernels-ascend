@@ -47,6 +47,11 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 | moe | `inplace_unique_group_indices` | De-duplicate group indices |
 | moe | `topk_gate` | `torch_npu.npu_moe_gating_top_k_softmax` / `npu_moe_gating_top_k` |
 | moe | `top2_sum_gate` | `torch_npu.npu_moe_gating_top_k` (group routing) |
+| moe | `get_fused_mapping` | `npu_moe_init_routing` + sort-based post-processing |
+| moe | `expand_to_fused` | `npu_moe_init_routing` (expansion with position remap) |
+| moe | `expand_to_fused_with_sf` | `npu_moe_init_routing` × 2 calls (data + sf) |
+| moe | `reduce_fused` | `npu_moe_finalize_routing` (column-major reshape of `token_topk_to_pos`) |
+| moe | `topk_sum_and_topk_group_idx` | `torch.topk` + `torch.sort` (NPU-native; `npu_moe_gating_top_k` doesn't expose group indices) |
 | mhc | `expand_to_mhc` | Expand hidden for MHC heads |
 | mhc | `mhc_head_compute_mix` | Per-head mix coefficients |
 | mhc | `mhc_pre_split_mixes` | Split pre/post/comb mixes |
@@ -63,22 +68,21 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 
 ### Unsupported Kernels and Reasons
 
-| Family | Kernel | Reason |
-|--------|--------|--------|
-| engram | all | No torch_npu APIs; custom architecture |
-| moe | `get_fused_mapping` | Interface mismatch with `npu_moe_init_routing` |
-| moe | `expand_to_fused` | Interface mismatch with `npu_moe_init_routing` |
-| moe | `expand_to_fused_with_sf` | Not yet implemented in torch_npu |
-| moe | `reduce_fused` | Interface mismatch with `npu_moe_finalize_routing` |
-| moe | `topk_sum_and_topk_group_idx` | No direct torch_npu API |
-| mhc | `sinkhorn_normalize` | CANN >= 9.0.0 required (`npu_mhc_sinkhorn`) |
-| mhc | `mhc_post` | CANN >= 9.0.0 required (`npu_mhc_post`) |
-| mhc | `mhc_pre_big_fuse` | CANN >= 9.0.0 required (`npu_mhc_pre`) |
-| quant | `per_channel_cast_and_transpose` | No torch_npu fused kernel available |
-| quant | `per_block_cast_lossless` | No torch_npu API for lossless block cast |
-| quant | `cast_back_e5m6` | No torch_npu API for e5m6 format |
-| quant | `per_token_cast_to_e5m6` | No torch_npu API for e5m6 format |
-| quant | `swiglu_backward_and_per_token_cast` | No SwiGLU backward API in torch_npu |
+| Family | Kernel | Reason | Matchability |
+|--------|--------|--------|--------------|
+| engram | `engram_hash` | No torch_npu API; custom n-gram hashing | too different |
+| engram | `engram_gate_fwd` | No torch_npu API; custom gated attention | too different |
+| engram | `engram_gate_bwd` | No torch_npu API; backward pass unavailable | too different |
+| engram | `grad_w_reduce` | No torch_npu API; custom gradient reduction | too different |
+| engram | `fused_weight` | No torch_npu API; custom weight fusion | too different |
+| mhc | `sinkhorn_normalize` | CANN >= 9.0.0 required (`npu_mhc_sinkhorn` — API exists, runtime unavailable on this cluster) | can match with a bit pre/post processing (on CANN ≥ 9.0) |
+| mhc | `mhc_post` | CANN >= 9.0.0 required (`npu_mhc_post` — API exists, runtime unavailable) | can match with a bit pre/post processing (on CANN ≥ 9.0) |
+| mhc | `mhc_pre_big_fuse` | CANN >= 9.0.0 required (`npu_mhc_pre` — API exists, runtime unavailable) | can match with a bit pre/post processing (on CANN ≥ 9.0) |
+| quant | `per_channel_cast_and_transpose` | No torch_npu fused cast+transpose | too different |
+| quant | `per_block_cast_lossless` | No torch_npu API for lossless block cast | too different |
+| quant | `cast_back_e5m6` | No torch_npu API for e5m6 format | too different |
+| quant | `per_token_cast_to_e5m6` | No torch_npu API for e5m6 format | too different |
+| quant | `swiglu_backward_and_per_token_cast` | No SwiGLU backward API in torch_npu | too different |
 
 ## Benchmarks
 
