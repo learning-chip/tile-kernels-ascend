@@ -1,0 +1,16 @@
+[project]
+name = "tile-kernels-ascend"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+    "torch",
+    "torch_npu",
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "benchmark: marks tests as benchmarks (deselect with '-m \"not benchmark\"')",
+    "slow: slow tests",
+]
