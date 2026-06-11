@@ -58,6 +58,8 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 | quant | `per_channel_cast_fused` | `torch_npu.npu_dynamic_quant` |
 | quant | `per_block_cast` | `torch_npu.npu_dynamic_block_quant` |
 | quant | `cast_back` | `torch_npu.npu_anti_quant` |
+| quant | `swiglu_forward_and_per_channel_cast_and_transpose` | `npu_swiglu_quant` (int8 output, not FP8 e4m3) |
+| quant | `swiglu_forward_and_per_token_cast` | `npu_swiglu_quant` per-token (int8 output, not FP8 e4m3) |
 
 ### Unsupported Kernels and Reasons
 
@@ -76,8 +78,7 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 | quant | `per_block_cast_lossless` | No torch_npu API for lossless block cast |
 | quant | `cast_back_e5m6` | No torch_npu API for e5m6 format |
 | quant | `per_token_cast_to_e5m6` | No torch_npu API for e5m6 format |
-| quant | `swiglu_forward_and_*` | No torch_npu fused kernel available |
-| quant | `swiglu_backward_and_*` | No torch_npu fused kernel available |
+| quant | `swiglu_backward_and_per_token_cast` | No SwiGLU backward API in torch_npu |
 
 ## Benchmarks
 

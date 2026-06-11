@@ -94,18 +94,14 @@ def swiglu_forward_and_per_channel_cast_and_transpose(
     x: torch.Tensor,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    raise NotImplementedError(
-        "ACLNN backend: swiglu_forward_and_per_channel_cast_and_transpose fused kernel not yet available"
-    )
+    return torch_npu.npu_swiglu_quant(x, quant_mode=0, dst_type=torch.int8)
 
 
 def swiglu_forward_and_per_token_cast(
     x: torch.Tensor,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    raise NotImplementedError(
-        "ACLNN backend: swiglu_forward_and_per_token_cast fused kernel not yet available"
-    )
+    return torch_npu.npu_swiglu_quant(x, quant_mode=1, dst_type=torch.int8)
 
 
 def swiglu_backward_and_per_token_cast(
@@ -115,7 +111,7 @@ def swiglu_backward_and_per_token_cast(
     **kwargs,
 ) -> tuple:
     raise NotImplementedError(
-        "ACLNN backend: swiglu_backward_and_per_token_cast fused kernel not yet available"
+        "ACLNN backend: swiglu_backward_and_per_token_cast — no SwiGLU backward API in torch_npu"
     )
 
 

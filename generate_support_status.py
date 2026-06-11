@@ -125,9 +125,12 @@ ACLNN_NOTES = {
     ('quant', 'per_block_cast_lossless'): 'No torch_npu API for lossless block cast',
     ('quant', 'cast_back_e5m6'): 'No torch_npu API for e5m6 format',
     ('quant', 'per_token_cast_to_e5m6'): 'No torch_npu API for e5m6 format',
-    ('quant', 'swiglu_forward_and_per_channel_cast_and_transpose'): 'No torch_npu fused kernel available',
-    ('quant', 'swiglu_forward_and_per_token_cast'): 'No torch_npu fused kernel available',
-    ('quant', 'swiglu_backward_and_per_token_cast'): 'No torch_npu fused kernel available',
+    ('quant', 'swiglu_backward_and_per_token_cast'): 'No SwiGLU backward API in torch_npu',
+}
+
+ACLNN_SUPPORTED_NOTES = {
+    ('quant', 'swiglu_forward_and_per_channel_cast_and_transpose'): 'closest: npu_swiglu_quant (int8/int4 output, not FP8 e4m3)',
+    ('quant', 'swiglu_forward_and_per_token_cast'): 'closest: npu_swiglu_quant per-token (int8/int4 output, not FP8 e4m3)',
 }
 
 
@@ -169,7 +172,7 @@ def _check_backend(backend, family, kernel_name):
 
 def _get_note(family, kernel_name, aclnn_supported):
     if aclnn_supported:
-        return ''
+        return ACLNN_SUPPORTED_NOTES.get((family, kernel_name), '')
     return ACLNN_NOTES.get((family, kernel_name), 'No torch_npu API available')
 
 
