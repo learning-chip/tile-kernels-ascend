@@ -45,6 +45,8 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 | moe | `mask_indices_by_tp` | TP-aware index masking |
 | moe | `normalize_weight` | Top-k weight normalization |
 | moe | `inplace_unique_group_indices` | De-duplicate group indices |
+| moe | `topk_gate` | `torch_npu.npu_moe_gating_top_k_softmax` / `npu_moe_gating_top_k` |
+| moe | `top2_sum_gate` | `torch_npu.npu_moe_gating_top_k` (group routing) |
 | mhc | `expand_to_mhc` | Expand hidden for MHC heads |
 | mhc | `mhc_head_compute_mix` | Per-head mix coefficients |
 | mhc | `mhc_pre_split_mixes` | Split pre/post/comb mixes |
@@ -66,8 +68,6 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 | moe | `expand_to_fused` | Interface mismatch with `npu_moe_init_routing` |
 | moe | `expand_to_fused_with_sf` | Not yet implemented in torch_npu |
 | moe | `reduce_fused` | Interface mismatch with `npu_moe_finalize_routing` |
-| moe | `topk_gate` | Requires `torch_npu` at import (gating API) |
-| moe | `top2_sum_gate` | Requires `torch_npu` at import |
 | moe | `topk_sum_and_topk_group_idx` | No direct torch_npu API |
 | mhc | `sinkhorn_normalize` | CANN >= 9.0.0 required (`npu_mhc_sinkhorn`) |
 | mhc | `mhc_post` | CANN >= 9.0.0 required (`npu_mhc_post`) |
@@ -115,3 +115,40 @@ python generate_support_status.py
 - NPU mock kernel: same PyTorch eager code on NPU
 
 Note: `mhc_pre_big_fuse`, `mhc_post`, and `sinkhorn_normalize` require CANN >= 9.0.0 for the fused `npu_mhc_pre` / `npu_mhc_post` / `npu_mhc_sinkhorn` APIs.
+
+### Reproducing CANN Version Error
+
+On CANN < 9.0.0 (e.g. 25.5.1 / V100R001C23SPC006B220), the MHC fused APIs are unavailable. To reproduce:
+
+```bash
+# npu_mhc_pre
+python -c "
+import torch, torch_npu
+T, n, D = 128, 4, 512
+x = torch.randn(T, n, D, dtype=torch.bfloat16).npu()
+phi = torch.randn(n*n+2*n, n*D, dtype=torch.float32).npu()
+alpha = torch.tensor([1.,1.,1.], dtype=torch.float32).npu()
+bias = torch.zeros(n*n+2*n, dtype=torch.float32).npu()
+torch_npu.npu_mhc_pre(x, phi, alpha, bias)
+"
+# Error: torch_npu.npu_mhc_pre requires CANN >= 9.0.0 and aclnnMhcPre support. Please upgrade CANN.
+
+# npu_mhc_post
+python -c "
+import torch, torch_npu
+x = torch.randn(1, 128, 4, dtype=torch.bfloat16).npu()
+h_res = torch.randn(1, 128, 4, 4, dtype=torch.float32).npu()
+h_out = torch.randn(1, 128, 512, dtype=torch.bfloat16).npu()
+h_post = torch.randn(1, 128, 4, dtype=torch.float32).npu()
+torch_npu.npu_mhc_post(x, h_res, h_out, h_post)
+"
+# Error: aclnnMhcPost or aclnnMhcPostGetWorkspaceSize not in libopapi.so, or libopapi.so not found.
+
+# npu_mhc_sinkhorn
+python -c "
+import torch, torch_npu
+x = torch.randn(1, 128, 4, 4, dtype=torch.float32).npu()
+torch_npu.npu_mhc_sinkhorn(x)
+"
+# Error: aclnnMhcSinkhorn or aclnnMhcSinkhornGetWorkspaceSize not in libopapi.so, or libopapi.so not found.
+```

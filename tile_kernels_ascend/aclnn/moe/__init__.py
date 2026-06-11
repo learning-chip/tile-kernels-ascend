@@ -89,8 +89,9 @@ def topk_gate(
         result = torch_npu.npu_moe_gating_top_k_softmax(logits, k=num_topk)
     else:
         result = torch_npu.npu_moe_gating_top_k(logits, k=num_topk)
-    expanded_x, expert_idx, row_idx = result
-    return expert_idx, row_idx
+    # NPU returns (weights, expert_idx, row_idx); torch ref returns (topk_idx, topk_weights)
+    weights, expert_idx, _row_idx = result
+    return expert_idx.long(), weights
 
 
 def top2_sum_gate(
@@ -128,8 +129,9 @@ def top2_sum_gate(
             k=num_topk,
             routed_scaling_factor=routed_scaling_factor,
         )
-    expanded_x, expert_idx, row_idx = result
-    return expert_idx, row_idx
+    # NPU returns (weights, expert_idx, row_idx); torch ref returns (topk_idx, topk_weights)
+    weights, expert_idx, _row_idx = result
+    return expert_idx.long(), weights
 
 
 def topk_sum_and_topk_group_idx(
