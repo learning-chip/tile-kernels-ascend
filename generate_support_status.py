@@ -107,6 +107,30 @@ TORCH_FUNC_MAP = {
 }
 
 
+ACLNN_NOTES = {
+    ('engram', 'engram_hash'): 'No torch_npu API; custom n-gram hashing',
+    ('engram', 'engram_gate_fwd'): 'No torch_npu API; custom gated attention',
+    ('engram', 'engram_gate_bwd'): 'No torch_npu API; backward pass unavailable',
+    ('engram', 'grad_w_reduce'): 'No torch_npu API; custom gradient reduction',
+    ('engram', 'fused_weight'): 'No torch_npu API; custom weight fusion',
+    ('mhc', 'sinkhorn_normalize'): 'CANN >= 9.0.0 required (npu_mhc_sinkhorn)',
+    ('mhc', 'mhc_post'): 'CANN >= 9.0.0 required (npu_mhc_post)',
+    ('mhc', 'mhc_pre_big_fuse'): 'CANN >= 9.0.0 required (npu_mhc_pre)',
+    ('moe', 'get_fused_mapping'): 'Interface mismatch with npu_moe_init_routing',
+    ('moe', 'expand_to_fused'): 'Interface mismatch with npu_moe_init_routing',
+    ('moe', 'expand_to_fused_with_sf'): 'Interface mismatch with npu_moe_init_routing',
+    ('moe', 'reduce_fused'): 'Interface mismatch with npu_moe_finalize_routing',
+    ('moe', 'topk_sum_and_topk_group_idx'): 'No direct torch_npu API',
+    ('quant', 'per_channel_cast_and_transpose'): 'No torch_npu fused kernel available',
+    ('quant', 'per_block_cast_lossless'): 'No torch_npu API for lossless block cast',
+    ('quant', 'cast_back_e5m6'): 'No torch_npu API for e5m6 format',
+    ('quant', 'per_token_cast_to_e5m6'): 'No torch_npu API for e5m6 format',
+    ('quant', 'swiglu_forward_and_per_channel_cast_and_transpose'): 'No torch_npu fused kernel available',
+    ('quant', 'swiglu_forward_and_per_token_cast'): 'No torch_npu fused kernel available',
+    ('quant', 'swiglu_backward_and_per_token_cast'): 'No torch_npu fused kernel available',
+}
+
+
 def _has_not_implemented(func):
     try:
         src = inspect.getsource(func)
@@ -143,20 +167,31 @@ def _check_backend(backend, family, kernel_name):
     return False
 
 
+def _get_note(family, kernel_name, aclnn_supported):
+    if aclnn_supported:
+        return ''
+    return ACLNN_NOTES.get((family, kernel_name), 'No torch_npu API available')
+
+
 def scan_tests():
     tests_dir = Path(__file__).parent / 'tests'
     coverage = {}
     if not tests_dir.is_dir():
         return coverage
-    for family_dir in sorted(tests_dir.iterdir()):
-        if not family_dir.is_dir() or family_dir.name.startswith(('_', '.')):
-            continue
-        family = family_dir.name
+    for entry in sorted(tests_dir.iterdir()):
+        if entry.is_dir() and not entry.name.startswith(('_', '.')):
+            family = entry.name
+            kernels = set()
+            for test_file in sorted(entry.glob('test_*.py')):
+                kernels.add(test_file.stem[len('test_'):])
+            if kernels:
+                coverage[family] = kernels
+    standalone = sorted(tests_dir.glob('test_*.py'))
+    if standalone:
         kernels = set()
-        for test_file in sorted(family_dir.glob('test_*.py')):
+        for test_file in standalone:
             kernels.add(test_file.stem[len('test_'):])
-        if kernels:
-            coverage[family] = kernels
+        coverage['_root'] = kernels
     return coverage
 
 
@@ -169,14 +204,21 @@ def generate_rows():
     ]
     for family, kernel_map in KERNEL_LOC.items():
         for kernel_name, ref_loc in kernel_map.items():
+            aclnn_supported = _check_backend('aclnn', family, kernel_name)
             for backend_name, checker in backends:
                 supported = checker(family, kernel_name)
+                note = ''
+                if backend_name == 'aclnn':
+                    note = _get_note(family, kernel_name, supported)
                 rows.append({
                     'family': family,
                     'kernel_name': kernel_name,
                     'backend': backend_name,
                     'supported': supported,
                     'ref_loc_original_tilelang': ref_loc,
+                    'aclnn_supported': aclnn_supported if backend_name == 'aclnn' else '',
+                    'speedup_vs_cpu': 'N/A',
+                    'notes': note,
                 })
     return rows
 
@@ -188,7 +230,10 @@ def main():
     csv_dir = Path(__file__).parent / 'support_status'
     csv_dir.mkdir(exist_ok=True)
     csv_path = csv_dir / 'support_status.csv'
-    fieldnames = ['family', 'kernel_name', 'backend', 'supported', 'ref_loc_original_tilelang']
+    fieldnames = [
+        'family', 'kernel_name', 'backend', 'supported',
+        'ref_loc_original_tilelang', 'aclnn_supported', 'speedup_vs_cpu', 'notes',
+    ]
     with open(csv_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -196,50 +241,74 @@ def main():
 
     print(f"CSV written to: {csv_path}\n")
 
-    print("=" * 70)
+    print("=" * 80)
     print("KERNEL SUPPORT STATUS SUMMARY")
-    print("=" * 70)
+    print("=" * 80)
 
     if test_coverage:
         print("\nTest coverage (tests/):")
         for fam in sorted(test_coverage):
             kernels = sorted(test_coverage[fam])
-            print(f"  {fam}: {len(kernels)} test files")
+            label = fam if fam != '_root' else '(root-level)'
+            print(f"  {label}: {len(kernels)} test files")
             for k in kernels:
-                marker = " [known]" if fam in KERNEL_LOC and k in KERNEL_LOC[fam] else " [extra]"
+                marker = " [known]" if fam != '_root' and fam in KERNEL_LOC and k in KERNEL_LOC[fam] else " [extra]"
                 print(f"    - {k}{marker}")
 
     family_stats = {}
     total_supported = 0
     total_rows = 0
+    aclnn_total_supported = 0
+    aclnn_total_kernels = 0
     for r in rows:
         fam = r['family']
         if fam not in family_stats:
-            family_stats[fam] = {'supported': 0, 'total': 0}
+            family_stats[fam] = {
+                'supported': 0, 'total': 0,
+                'aclnn_supported': 0, 'aclnn_total': 0,
+            }
         family_stats[fam]['total'] += 1
         total_rows += 1
         if r['supported']:
             family_stats[fam]['supported'] += 1
             total_supported += 1
 
-    print(f"\n{'Family':<15} {'Supported':<12} {'Total':<10} {'Ratio':<15}")
-    print("-" * 60)
+    aclnn_rows = [r for r in rows if r['backend'] == 'aclnn']
+    for r in aclnn_rows:
+        fam = r['family']
+        family_stats[fam]['aclnn_total'] += 1
+        aclnn_total_kernels += 1
+        if r['supported']:
+            family_stats[fam]['aclnn_supported'] += 1
+            aclnn_total_supported += 1
+
+    print(f"\n{'Family':<12} {'All Backends':<24} {'ACLNN only':<24} {'ACLNN Count'}")
+    print("-" * 75)
     for fam in ['engram', 'mhc', 'moe', 'quant', 'transpose']:
         if fam not in family_stats:
             continue
         s = family_stats[fam]['supported']
         t = family_stats[fam]['total']
         pct = f"{100 * s / t:.1f}%" if t else "N/A"
-        print(f"{fam:<15} {s:<12} {t:<10} {s}/{t} ({pct})")
+        as_ = family_stats[fam]['aclnn_supported']
+        at = family_stats[fam]['aclnn_total']
+        apct = f"{100 * as_ / at:.1f}%" if at else "N/A"
+        all_lbl = f"{s}/{t} ({pct})"
+        aclnn_lbl = f"{as_}/{at} ({apct})"
+        print(f"{fam:<12} {all_lbl:<24} {aclnn_lbl:<24} {as_}")
 
     pct_overall = f"{100 * total_supported / total_rows:.1f}%" if total_rows else "N/A"
-    print("-" * 60)
-    print(f"{'OVERALL':<15} {total_supported:<12} {total_rows:<10} {total_supported}/{total_rows} ({pct_overall})")
-    print("=" * 70)
+    apct_overall = f"{100 * aclnn_total_supported / aclnn_total_kernels:.1f}%" if aclnn_total_kernels else "N/A"
+    print("-" * 75)
+    all_lbl = f"{total_supported}/{total_rows} ({pct_overall})"
+    aclnn_lbl = f"{aclnn_total_supported}/{aclnn_total_kernels} ({apct_overall})"
+    print(f"{'OVERALL':<12} {all_lbl:<24} {aclnn_lbl:<24} {aclnn_total_supported}")
+    print("=" * 80)
 
     print("\nDetailed support matrix:")
-    print(f"{'Family':<12} {'Kernel':<50} {'torch-eager':<14} {'aclnn':<10} {'pto':<10} {'LoC'}")
-    print("-" * 110)
+    hdr = f"{'Family':<12} {'Kernel':<50} {'torch-eager':<14} {'aclnn':<10} {'pto':<10} {'notes'}"
+    print(hdr)
+    print("-" * 130)
     current_family = None
     for r in rows:
         fam = r['family']
@@ -251,14 +320,16 @@ def main():
             torch_val = r['supported']
             aclnn_val = None
             pto_val = None
+            current_note = ''
         elif r['backend'] == 'aclnn':
             aclnn_val = r['supported']
+            current_note = r['notes']
         elif r['backend'] == 'pto':
             pto_val = r['supported']
             te = str(torch_val)
             ae = str(aclnn_val)
             pe = str(pto_val)
-            print(f"{r['family']:<12} {r['kernel_name']:<50} {te:<14} {ae:<10} {pe:<10} {r['ref_loc_original_tilelang']}")
+            print(f"{r['family']:<12} {r['kernel_name']:<50} {te:<14} {ae:<10} {pe:<10} {current_note}")
 
 
 if __name__ == '__main__':
