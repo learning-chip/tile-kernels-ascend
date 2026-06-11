@@ -98,14 +98,54 @@ python generate_support_status.py
 
 ## Reference LoC (Original tilelang)
 
-| Family | # Kernels | Original @jit LoC |
-|--------|-----------|-------------------|
-| engram | 5 | 493 |
-| mhc | 20 | 961 |
-| moe | 11 | 713 |
-| quant | 11 | 1,048 |
-| transpose | 1 | 46 |
-| **Total** | **48** | **3,261** |
+Per-kernel LoC of the kernel body under `@tilelang.jit` in the original TileKernels repo (excluding testing code, blank lines, comments). See [`reference_loc_detailed.md`](reference_loc_detailed.md) for the full breakdown with source file paths.
+
+| Kernel | Family | LoC |
+|--------|--------|----:|
+| `engram_grad_w_reduce` | engram | 49 |
+| `engram_hash` | engram | 50 |
+| `engram_gate_fwd` | engram | 140 |
+| `engram_gate_bwd` | engram | 227 |
+| `fused_weight` | engram | 27 |
+| **engram subtotal** | | **493** |
+| `mhc_multilayer_recompute` | mhc | 91 |
+| `mhc_pre_big_fuse` | mhc | 96 |
+| `mhc_pre_norm_fn` | mhc | 228 |
+| `mhc_pre_apply_mix` | mhc | 78 |
+| `mhc_pre_split_mixes` | mhc | 124 |
+| `mhc_post` | mhc | 114 |
+| `mhc_head_compute_mix` | mhc | 65 |
+| `mhc_sinkhorn_normalize` | mhc | 118 |
+| `mhc_expand_to_mhc` | mhc | 47 |
+| **mhc subtotal** | | **961** |
+| `moe_top2_sum_gate` | moe | 221 |
+| `moe_get_fused_mapping` | moe | 120 |
+| `moe_expand_to_fused` | moe | 70 |
+| `moe_reduce_fused` | moe | 52 |
+| `moe_topk_sum_and_topk_idx` | moe | 48 |
+| `moe_topk_gate` | moe | 40 |
+| `moe_mask_indices_by_tp` | moe | 34 |
+| `moe_inplace_unique` | moe | 34 |
+| `moe_group_count` | moe | 32 |
+| `moe_aux_fi` | moe | 33 |
+| `moe_normalize_weight` | moe | 29 |
+| **moe subtotal** | | **713** |
+| `quant_swiglu_fwd_per_channel` | quant | 139 |
+| `quant_swiglu_fwd_per_token` | quant | 134 |
+| `quant_swiglu_bwd_per_token` | quant | 120 |
+| `quant_per_token_cast` | quant | 113 |
+| `quant_per_block_cast` | quant | 112 |
+| `quant_per_channel_cast_fused` | quant | 98 |
+| `quant_per_block_cast_lossless` | quant | 96 |
+| `quant_per_channel_cast_and_transpose` | quant | 57 |
+| `quant_per_token_cast_to_e5m6` | quant | 69 |
+| `quant_cast_back` | quant | 46 |
+| `quant_cast_back_e5m6` | quant | 64 |
+| **quant subtotal** | | **1,048** |
+| `transpose_batched` | transpose | 46 |
+| **transpose subtotal** | | **46** |
+| | | |
+| **GRAND TOTAL** | | **3,261** |
 
 ## Environment
 
