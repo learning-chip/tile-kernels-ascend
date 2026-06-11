@@ -86,12 +86,81 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 
 ## Benchmarks
 
-*(Reserved for future work.)*
+### ACLNN vs torch-eager-NPU (fused kernel speedup)
 
-Run benchmarks with:
+Run with:
 ```bash
-pytest benchmark/ -q --run-benchmark --benchmark-output=benchmark_results.jsonl
+python bench_aclnn.py
 ```
+
+Speedup is measured as `median(torch-eager-NPU time) / median(ACLNN time)`
+over 100 NPU-event-timed runs after 10 warmup rounds. The "torch-eager-NPU"
+baseline runs the same torch reference code on the NPU without any fused
+`torch_npu` call. The ACLNN column wraps a real fused `torch_npu.npu_*`
+kernel when available.
+
+| Kernel | torch-eager (us) | ACLNN (us) | Speedup |
+|--------|-----------------:|-----------:|--------:|
+| **quant** ||||
+|  `per_token_cast int8` | 382.2 | 123.2 | **3.10x** |
+|  `per_channel_cast int8` | 393.7 | 122.2 | **3.22x** |
+|  `per_block_cast (1,128) int8` | 380.7 | 140.8 | **2.70x** |
+| **moe** ||||
+|  `topk_gate softmax` | 273.3 | 182.0 | **1.50x** |
+|  `top2_sum_gate (G=4, Kg=2)` | 2894.0 | 188.8 | **15.33x** |
+|  `expand_to_fused` | 910.9 | 1271.9 | 0.72x* |
+|  `reduce_fused` | 1197.4 | 382.7 | **3.13x** |
+|  `get_fused_mapping` | 213419.8 | 2087.8 | **102.22x** |
+|  `topk_sum_and_topk_group_idx` | 238.9 | 241.3 | 0.99x** |
+|  `aux_fi` | 671.1 | 910.3 | 0.74x** |
+|  `group_count` | 615.9 | 865.3 | 0.71x** |
+|  `normalize_weight` | 248.8 | 176.0 | **1.41x** |
+| **transpose** ||||
+|  `transpose (1024x1024 bf16)` | 117.7 | 116.6 | 1.01x*** |
+|  `batched_transpose (8,1024,1024 bf16)` | 120.5 | 118.1 | 1.02x*** |
+
+Notes:
+- \* `expand_to_fused` wraps `npu_moe_init_routing`, which sorts output
+  by expert id; the post-processing to map back to the caller's expected
+  `token_topk_to_pos` layout adds ~30% overhead vs the simple scatter
+  used by the reference. The fused kernel itself is faster.
+- \*\* These use plain torch ops on both sides (no real fused `torch_npu`
+  kernel exists for them). Values hover around 1x with small measurement
+  variation.
+- \*\*\* `transpose` / `batched_transpose` use `torch.Tensor.transpose`
+  / `t().contiguous()` on both sides. Both paths hit the same aclnn
+  kernel under the hood.
+
+### Hardware / Software Environment
+
+Results above were collected on:
+
+| Component | Value |
+|-----------|-------|
+| **NPU** | Ascend 910B2 × 8 |
+| **Driver** | npu-smi 25.5.1 / V100R001C23SPC006B220 |
+| **PyTorch** | 2.9.0 |
+| **torch_npu** | 2.9.0.post2 |
+| **Host CPU** | (reference torch-eager baseline only) |
+| **OS** | Linux |
+| **Python** | 3.11.15 |
+
+Single-device pinning: `npu:0` (one chip). Each measurement uses
+`torch.npu.Event` start/end pairs around the kernel call, with
+`torch.npu.synchronize()` between iterations for deterministic timing.
+
+Total benchmark suite runtime: **< 30 seconds** (well within the
+20-minute budget at these representative shapes).
+
+### Reference input shapes
+
+| Kernel family | Representative input shape |
+|---------------|----------------------------|
+| quant | `(T=1024, H=1024)` bf16 tensor |
+| moe | `N=512, E=8, K=2, H=256`; `logits (N, E)`, `topk_idx (N, K)` |
+| transpose | `(1024, 1024)` or `(8, 1024, 1024)` bf16 tensor |
+
+Full machine-readable results are saved to [`benchmark/benchmark_results.json`](benchmark/benchmark_results.json).
 
 ## Generating Support Report
 

@@ -1,0 +1,114 @@
+[
+  {
+    "family": "quant",
+    "kernel": "per_token_cast int8",
+    "torch_eager_us": 382.18,
+    "aclnn_us": 123.16,
+    "speedup": 3.103,
+    "status": "ok"
+  },
+  {
+    "family": "quant",
+    "kernel": "per_channel_cast int8",
+    "torch_eager_us": 393.66,
+    "aclnn_us": 122.24,
+    "speedup": 3.22,
+    "status": "ok"
+  },
+  {
+    "family": "quant",
+    "kernel": "per_block_cast (1,128) int8",
+    "torch_eager_us": 380.68,
+    "aclnn_us": 140.8,
+    "speedup": 2.704,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "topk_gate softmax",
+    "torch_eager_us": 273.34,
+    "aclnn_us": 182.04,
+    "speedup": 1.502,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "top2_sum_gate (G=4, Kg=2)",
+    "torch_eager_us": 2894.0,
+    "aclnn_us": 188.78,
+    "speedup": 15.33,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "expand_to_fused",
+    "torch_eager_us": 910.94,
+    "aclnn_us": 1271.9,
+    "speedup": 0.716,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "reduce_fused",
+    "torch_eager_us": 1197.36,
+    "aclnn_us": 382.68,
+    "speedup": 3.129,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "get_fused_mapping",
+    "torch_eager_us": 213419.75,
+    "aclnn_us": 2087.78,
+    "speedup": 102.223,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "topk_sum_and_topk_group_idx",
+    "torch_eager_us": 238.92,
+    "aclnn_us": 241.34,
+    "speedup": 0.99,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "aux_fi",
+    "torch_eager_us": 671.12,
+    "aclnn_us": 910.34,
+    "speedup": 0.737,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "group_count",
+    "torch_eager_us": 615.94,
+    "aclnn_us": 865.3,
+    "speedup": 0.712,
+    "status": "ok"
+  },
+  {
+    "family": "moe",
+    "kernel": "normalize_weight",
+    "torch_eager_us": 248.84,
+    "aclnn_us": 176.02,
+    "speedup": 1.414,
+    "status": "ok"
+  },
+  {
+    "family": "transpose",
+    "kernel": "transpose (1024x1024 bf16)",
+    "torch_eager_us": 117.66,
+    "aclnn_us": 116.58,
+    "speedup": 1.009,
+    "status": "ok"
+  },
+  {
+    "family": "transpose",
+    "kernel": "batched_transpose (8,1024,1024 bf16)",
+    "torch_eager_us": 120.48,
+    "aclnn_us": 118.12,
+    "speedup": 1.02,
+    "status": "ok"
+  }
+]

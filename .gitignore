@@ -7,3 +7,5 @@ dist/
 support_status/*.csv
 benchmark_results*.jsonl
 .env
+extra-info/
+data-dump/
