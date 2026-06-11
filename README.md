@@ -162,6 +162,24 @@ Total benchmark suite runtime: **< 30 seconds** (well within the
 
 Full machine-readable results are saved to [`benchmark/benchmark_results.json`](benchmark/benchmark_results.json).
 
+---
+
+**TODO: Ascend 950 Validation**
+
+The current ACLNN benchmark results are obtained on **Ascend 910B** devices (specifically Ascend 910B2 with CANN 8.0). Several kernel families are marked as "Unsupported" due to missing or incompatible torch_npu APIs:
+
+- **mhc kernels** (`mhc_multilayer_recompute`, `mhc_post`, `sinkhorn_normalize`) — require CANN >= 9.0.0
+- **mxfp quant kernels** (`quant_mxfp4`, `quant_mxfp8`) — require newer torch_npu dynamic block quant with `block_size=(32,32)` and `row_block_size` != 1
+
+These kernels are **very likely to be supported** when migrating to **Ascend 950** devices, which ship with CANN 9.0+ and updated torch_npu APIs. After obtaining access to an Ascend 950 test environment:
+
+1. Re-run `python bench_aclnn.py` to validate mhc and mxfp support
+2. Update the ACLNN wrapper implementations in `tile_kernels_ascend/aclnn/mhc/__init__.py` and `tile_kernels_ascend/aclnn/quant/__init__.py`
+3. Update the Benchmark Results table above with Ascend 950 numbers
+4. Move supported kernels from the "Unsupported Kernels" table to the "Supported Kernels" table
+
+---
+
 ## Generating Support Report
 
 ```bash
