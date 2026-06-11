@@ -1,6 +1,6 @@
 # tile-kernels-ascend
 
-Port of [TileKernels](../TileKernels) custom kernels to Ascend NPU.
+Port of [TileKernels](https://github.com/deepseek-ai/TileKernels) custom kernels to Ascend NPU.
 Each original tilelang kernel is represented as a torch-eager reference, with ACLNN and PTO fused-kernel backends as future targets.
 
 ## Structure
@@ -36,35 +36,35 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 
 ### Supported Kernels
 
-| Family | Kernel | Notes |
-|--------|--------|-------|
-| transpose | `transpose` | NPU native transpose |
-| transpose | `batched_transpose` | Batched dim-swap |
-| moe | `aux_fi` | Auxiliary load balancing |
-| moe | `group_count` | Expert group counting |
-| moe | `mask_indices_by_tp` | TP-aware index masking |
-| moe | `normalize_weight` | Top-k weight normalization |
-| moe | `inplace_unique_group_indices` | De-duplicate group indices |
-| moe | `topk_gate` | `torch_npu.npu_moe_gating_top_k_softmax` / `npu_moe_gating_top_k` |
-| moe | `top2_sum_gate` | `torch_npu.npu_moe_gating_top_k` (group routing) |
-| moe | `get_fused_mapping` | `npu_moe_init_routing` + sort-based post-processing |
-| moe | `expand_to_fused` | `npu_moe_init_routing` (expansion with position remap) |
-| moe | `expand_to_fused_with_sf` | `npu_moe_init_routing` × 2 calls (data + sf) |
-| moe | `reduce_fused` | `npu_moe_finalize_routing` (column-major reshape of `token_topk_to_pos`) |
-| moe | `topk_sum_and_topk_group_idx` | `torch.topk` + `torch.sort` (NPU-native; `npu_moe_gating_top_k` doesn't expose group indices) |
-| mhc | `expand_to_mhc` | Expand hidden for MHC heads |
-| mhc | `mhc_head_compute_mix` | Per-head mix coefficients |
-| mhc | `mhc_pre_split_mixes` | Split pre/post/comb mixes |
-| mhc | `mhc_pre_apply_mix` | Apply pre-mix to residual |
-| mhc | `mhc_pre_norm_fn` | Normalized RMS mixing |
-| mhc | `mhc_multilayer_recompute` | Multi-layer recompute loop |
-| quant | `per_token_cast` | `torch_npu.npu_dynamic_quant` |
-| quant | `per_channel_cast` | `torch_npu.npu_dynamic_quant` |
-| quant | `per_channel_cast_fused` | `torch_npu.npu_dynamic_quant` |
-| quant | `per_block_cast` | `torch_npu.npu_dynamic_block_quant` |
-| quant | `cast_back` | `torch_npu.npu_anti_quant` |
-| quant | `swiglu_forward_and_per_channel_cast_and_transpose` | `npu_swiglu_quant` (int8 output, not FP8 e4m3) |
-| quant | `swiglu_forward_and_per_token_cast` | `npu_swiglu_quant` per-token (int8 output, not FP8 e4m3) |
+| Family | Kernel | `torch_npu` API (equivalent / closest) | Notes |
+|--------|--------|----------------------------------------|-------|
+| transpose | `transpose` | `torch.Tensor.t().contiguous()` | |
+| transpose | `batched_transpose` | `torch.Tensor.transpose(-2, -1).contiguous()` | |
+| moe | `aux_fi` | `torch.bincount` | |
+| moe | `group_count` | `torch.bincount` | |
+| moe | `mask_indices_by_tp` | standard torch ops | |
+| moe | `normalize_weight` | `torch.sum + div` | |
+| moe | `inplace_unique_group_indices` | `torch.sort + scatter` | |
+| moe | `topk_gate` | `torch_npu.npu_moe_gating_top_k_softmax` / `npu_moe_gating_top_k` | |
+| moe | `top2_sum_gate` | `torch_npu.npu_moe_gating_top_k` | group routing via `group_select_mode=1` |
+| moe | `get_fused_mapping` | `torch_npu.npu_moe_init_routing` | + sorting post-processing |
+| moe | `expand_to_fused` | `torch_npu.npu_moe_init_routing` | + position remap |
+| moe | `expand_to_fused_with_sf` | `torch_npu.npu_moe_init_routing` × 2 | for data and sf tensors |
+| moe | `reduce_fused` | `torch_npu.npu_moe_finalize_routing` | + column-major reshape |
+| moe | `topk_sum_and_topk_group_idx` | `torch.topk` + `torch.sort` | `npu_moe_gating_top_k` doesn't expose group indices |
+| mhc | `expand_to_mhc` | `torch.Tensor.expand` + `contiguous` | |
+| mhc | `mhc_head_compute_mix` | `torch.sigmoid` + mul + add | |
+| mhc | `mhc_pre_split_mixes` | `torch.sigmoid` + split | |
+| mhc | `mhc_pre_apply_mix` | `torch.einsum` + sum | |
+| mhc | `mhc_pre_norm_fn` | `torch.einsum` + `torch.rsqrt` | |
+| mhc | `mhc_multilayer_recompute` | composed of `mhc_pre_apply_mix` + `mhc_post` | no single fused API |
+| quant | `per_token_cast` | `torch_npu.npu_dynamic_quant` | |
+| quant | `per_channel_cast` | `torch_npu.npu_dynamic_quant` | |
+| quant | `per_channel_cast_fused` | `torch_npu.npu_dynamic_quant` | |
+| quant | `per_block_cast` | `torch_npu.npu_dynamic_block_quant` | `row_block_size=1` required |
+| quant | `cast_back` | `torch_npu.npu_anti_quant` | |
+| quant | `swiglu_forward_and_per_channel_cast_and_transpose` | `torch_npu.npu_swiglu_quant` | int8/int4 output, not FP8 e4m3 |
+| quant | `swiglu_forward_and_per_token_cast` | `torch_npu.npu_swiglu_quant` | per-token quant mode; int8/int4, not FP8 e4m3 |
 
 ### Unsupported Kernels and Reasons
 
@@ -102,7 +102,7 @@ python generate_support_status.py
 
 ## Reference LoC (Original tilelang)
 
-Per-kernel LoC of the kernel body under `@tilelang.jit` in the original TileKernels repo (excluding testing code, blank lines, comments). See [`reference_loc_detailed.md`](reference_loc_detailed.md) for the full breakdown with source file paths.
+Per-kernel LoC of the kernel body under `@tilelang.jit` in the original [TileKernels](https://github.com/deepseek-ai/TileKernels) repo (excluding testing code, blank lines, comments). See [`reference_loc_detailed.md`](reference_loc_detailed.md) for the full breakdown with source file paths.
 
 | Kernel | Family | LoC |
 |--------|--------|----:|

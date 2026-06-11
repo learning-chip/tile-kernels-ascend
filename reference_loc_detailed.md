@@ -1,6 +1,6 @@
 # Reference LoC — Original TileLang @jit Kernels
 
-Line counts of the kernel body under `@tilelang.jit` in the original TileKernels repo (not including testing code, blank lines, or comments).
+Line counts of the kernel body under `@tilelang.jit` in the original [TileKernels](https://github.com/deepseek-ai/TileKernels) repo (not including testing code, blank lines, or comments).
 
 ## engram (5 kernels, 493 LoC)
 
