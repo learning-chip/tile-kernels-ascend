@@ -24,3 +24,11 @@ def test_per_token_cast_to_e5m6(dtype):
 
     torch.testing.assert_close(packed_npu.cpu(), packed_cpu)
     torch.testing.assert_close(sf_npu.cpu(), sf_cpu, atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
+def test_per_token_cast_to_e5m6_aclnn():
+    from tile_kernels_ascend.aclnn.quant import per_token_cast_to_e5m6
+    x = torch.randn(64, 64, dtype=torch.bfloat16).npu()
+    with pytest.raises(NotImplementedError):
+        per_token_cast_to_e5m6(x)

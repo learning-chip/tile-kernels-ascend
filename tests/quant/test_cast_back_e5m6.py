@@ -29,3 +29,12 @@ def test_cast_back_e5m6():
         pytest.xfail(f"NPU cast_back_from_e5m6 unsupported: {e}")
 
     torch.testing.assert_close(x_back_npu.cpu(), x_back_cpu, atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
+def test_cast_back_e5m6_aclnn():
+    from tile_kernels_ascend.aclnn.quant import cast_back_e5m6
+    x = torch.randn(64, 64, dtype=torch.bfloat16).npu()
+    x_sf = torch.randn(1, 1, dtype=torch.float32).npu()
+    with pytest.raises(NotImplementedError):
+        cast_back_e5m6((x, x_sf), fmt='bf16', block_size=(64, 64))

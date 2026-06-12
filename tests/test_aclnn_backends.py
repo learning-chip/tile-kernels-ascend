@@ -28,7 +28,13 @@ from tile_kernels_ascend.torch.mhc import (
 
 try:
     from tile_kernels_ascend.aclnn.quant import per_token_cast
-    from tile_kernels_ascend.torch.quant.cast import cast as per_token_cast_ref
+    from tile_kernels_ascend.aclnn.quant import per_block_cast
+    from tile_kernels_ascend.aclnn.quant import cast_back
+    from tile_kernels_ascend.aclnn.quant import per_channel_cast
+    from tile_kernels_ascend.aclnn.quant import swiglu_forward_and_per_token_cast
+    from tile_kernels_ascend.aclnn.quant import swiglu_forward_and_per_channel_cast_and_transpose
+    from tile_kernels_ascend.torch.quant.cast import cast as cast_ref
+    from tile_kernels_ascend.torch.quant.cast import cast_back as cast_back_ref
     QUANT_AVAILABLE = True
 except ImportError:
     QUANT_AVAILABLE = False
@@ -149,9 +155,40 @@ class TestMHCACLNN:
 @pytest.mark.skipif(not _has_npu(), reason='NPU not available')
 @pytest.mark.skipif(not QUANT_AVAILABLE, reason='Quant module not available')
 class TestQuantACLNN:
-    def test_per_token_cast(self):
+    def test_per_token_cast_int8(self):
+        x = torch.randn(16, 64, dtype=torch.bfloat16).npu()
+        quant_out, sf_out = per_token_cast(x, fmt='e2m1')
+        assert quant_out.shape == x.shape
+        assert quant_out.dtype == torch.int8
+        assert sf_out.shape[0] == x.shape[0]
+
+    def test_per_token_cast_fp8(self):
         x = torch.randn(16, 64, dtype=torch.bfloat16).npu()
         quant_out, sf_out = per_token_cast(x, fmt='e4m3')
+        assert quant_out.dtype == torch.float8_e4m3fn
+        assert sf_out.dtype == torch.float32
+
+    def test_per_block_cast_fp8_1x128(self):
+        x = torch.randn(128, 128, dtype=torch.bfloat16).npu()
+        quant_out, sf_out = per_block_cast(x, block_size=(1, 128), fmt='e4m3')
+        assert quant_out.dtype == torch.float8_e4m3fn
         assert quant_out.shape == x.shape
-        assert quant_out.dtype in [torch.float8_e4m3fn, torch.int8]
-        assert sf_out.shape[0] == x.shape[0]
+
+    def test_per_block_cast_fp8_128x128(self):
+        x = torch.randn(256, 256, dtype=torch.bfloat16).npu()
+        quant_out, sf_out = per_block_cast(x, block_size=(128, 128), fmt='e4m3')
+        assert quant_out.dtype == torch.float8_e4m3fn
+        assert quant_out.shape == x.shape
+
+    def test_per_channel_cast(self):
+        x = torch.randn(64, 128, dtype=torch.bfloat16).npu()
+        quant_out, sf_out = per_channel_cast(x, fmt='e4m3')
+        assert quant_out.dtype == torch.int8
+        assert sf_out.shape == (x.shape[-1],)
+
+    def test_cast_back_fp8(self):
+        x = torch.randn(128, 128, dtype=torch.bfloat16).npu()
+        x_q, x_sf = per_block_cast(x, block_size=(1, 128), fmt='e4m3')
+        x_back = cast_back((x_q, x_sf), fmt='bf16', block_size=(1, 128))
+        assert x_back.dtype == torch.bfloat16
+        assert x_back.shape == x.shape

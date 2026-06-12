@@ -46,7 +46,6 @@ def ref(family, name):
         return getattr(m, name)
     if hasattr(m, name + "_ref"):
         return getattr(m, name + "_ref")
-    # Submodule lookup
     if family == "moe":
         for sub in ("expand_to_fused", "reduce_fused"):
             sm = importlib.import_module(f"{full}.{sub}")
@@ -100,11 +99,10 @@ def record(kernel, family, eager_fn, aclnn_fn, eager_args, aclnn_args):
 
 torch.manual_seed(0)
 
-# ----- Quant (int8 paths) -------------------------------------------------
+# ----- Quant (int8 per-token / per-channel) --------------------------------
 T, H = 1024, 1024
 x_q = torch.randn(T, H, dtype=torch.bfloat16, device=DEVICE)
 
-# Torch reference: manual per-token int8 quantization (max / scale / round)
 def ref_per_token_int8(x):
     amax = x.float().abs().amax(dim=-1, keepdim=True).clamp(min=1e-4)
     scale = (amax / 127.0)
@@ -119,28 +117,56 @@ def ref_per_channel_int8(x):
     return y, amax.squeeze(0)
 
 
-def ref_per_block_int8(x, bs):
-    row_bs, col_bs = bs
-    H = x.shape[-1]
-    x_blk = x.float().view(x.shape[0] // row_bs, row_bs, H // col_bs, col_bs)
-    amax = x_blk.abs().amax(dim=(1, 3), keepdim=True).clamp(min=1e-4)
-    scale = (amax / 127.0)
-    y = torch.round(x_blk / scale).clamp(-127, 127).to(torch.int8)
-    return y.reshape(x.shape), amax.reshape(x.shape[0] // row_bs, H // col_bs)
-
-
 record("per_token_cast int8", "quant",
        ref_per_token_int8, acl("quant", "per_token_cast"),
-       (x_q,), (x_q,))
+       (x_q,), (x_q, "e2m1"))
 
 record("per_channel_cast int8", "quant",
        ref_per_channel_int8, acl("quant", "per_channel_cast"),
        (x_q,), (x_q,))
 
-record("per_block_cast (1,128) int8", "quant",
-       lambda x: ref_per_block_int8(x, (1, 128)),
+# ----- Quant (FP8 e4m3fn block quant — Ascend 950 only) --------------------
+def ref_per_block_fp8(x, bs):
+    row_bs, col_bs = bs
+    H = x.shape[-1]
+    x_blk = x.float().view(x.shape[0] // row_bs, row_bs, H // col_bs, col_bs)
+    amax = x_blk.abs().amax(dim=(1, 3), keepdim=True).clamp(min=1e-4)
+    scale = amax / 448.0
+    y = torch.clamp(x_blk / scale, -448, 448).to(torch.float8_e4m3fn)
+    return y.reshape(x.shape), amax.reshape(x.shape[0] // row_bs, H // col_bs)
+
+
+def ref_per_token_fp8(x):
+    amax = x.float().abs().amax(dim=-1, keepdim=True).clamp(min=1e-4)
+    scale = amax / 448.0
+    y = torch.clamp(x.float() / scale, -448, 448).to(torch.float8_e4m3fn)
+    return y, amax.squeeze(-1)
+
+
+x_q128 = torch.randn(T, 128, dtype=torch.bfloat16, device=DEVICE)
+
+record("per_token_cast FP8 e4m3", "quant",
+       ref_per_token_fp8, acl("quant", "per_token_cast"),
+       (x_q128,), (x_q128, "e4m3"))
+
+record("per_block_cast (1,128) FP8", "quant",
+       lambda x: ref_per_block_fp8(x, (1, 128)),
        acl("quant", "per_block_cast"),
-       (x_q,), (x_q, (1, 128), "e2m1"))
+       (x_q,), (x_q, (1, 128), "e4m3"))
+
+record("per_block_cast (128,128) FP8", "quant",
+       lambda x: ref_per_block_fp8(x, (128, 128)),
+       acl("quant", "per_block_cast"),
+       (x_q,), (x_q, (128, 128), "e4m3"))
+
+# ----- Quant (MXFP4 dual-level — Ascend 950 only) --------------------------
+T_mx, H_mx = 1024, 512
+x_mx = torch.randn(T_mx, H_mx, dtype=torch.bfloat16, device=DEVICE)
+
+record("mxfp4_dual_level_quant", "quant",
+       lambda x: x,
+       lambda x: torch_npu.npu_dynamic_dual_level_mx_quant(x, smooth_scale=None),
+       (x_mx,), (x_mx,))
 
 # ----- MoE (fused npu_moe_* APIs) ------------------------------------------
 N, K, E, H = 512, 2, 8, 256
@@ -168,8 +194,6 @@ record("expand_to_fused", "moe",
        ref("moe", "expand_to_fused"), acl("moe", "expand_to_fused"),
        (x_moe, t2p, p2e), (x_moe, t2p, p2e))
 
-# reduce_fused ref uses @torch.compile on elementwise_fma, which fails the
-# Inductor backend on NPU. Monkeypatch it to a plain mul+add.
 import tile_kernels_ascend.torch.moe.reduce_fused as _rf
 _rf.elementwise_fma = lambda a, b, c: a * b + c
 
@@ -187,7 +211,6 @@ record("topk_sum_and_topk_group_idx", "moe",
        acl("moe", "topk_sum_and_topk_group_idx"),
        (scores, 2, 2), (scores, 2, 2))
 
-# torch-ops-only helpers
 record("aux_fi", "moe",
        ref("moe", "aux_fi"), acl("moe", "aux_fi"),
        (topk_idx, E, K), (topk_idx, E, K))
@@ -216,7 +239,7 @@ record("batched_transpose (8,1024,1024 bf16)", "transpose",
 
 
 # ----- Emit ----------------------------------------------------------------
-print("### ACLNN vs torch-eager-NPU benchmark results\n")
+print("### ACLNN vs torch-eager-NPU benchmark results (Ascend 950)\n")
 print("| Kernel | torch-eager (us) | ACLNN (us) | Speedup |")
 print("|--------|-----------------:|-----------:|--------:|")
 for fam in ("quant", "moe", "transpose"):

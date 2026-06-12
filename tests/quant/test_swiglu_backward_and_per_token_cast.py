@@ -1,14 +1,15 @@
 import pytest
 import torch
 
-from tile_kernels_ascend.torch.quant.cast import cast
-from tile_kernels_ascend.torch.quant.swiglu import swiglu_backward
-
 NPU_AVAILABLE = hasattr(torch, "npu") and torch.npu.is_available()
 
 
 @pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
 def test_swiglu_backward_and_per_token_cast():
+    import tile_kernels_ascend.torch.moe.reduce_fused as _rf
+    _rf.elementwise_fma = lambda a, b, c: a * b + c
+    from tile_kernels_ascend.torch.quant.cast import cast
+    from tile_kernels_ascend.torch.quant.swiglu import swiglu_backward
     hidden = 128
     hidden2 = 2 * hidden
     num_expand = 128
@@ -21,7 +22,7 @@ def test_swiglu_backward_and_per_token_cast():
     try:
         x_q, x_sf = cast(x_raw, "e4m3", block_size=(1, num_per_channels))
     except RuntimeError as e:
-        pytest.xfail(f"NPU cast unsupported for setup: {e}")
+        pytest.xfail(f"CPU cast unsupported for setup: {e}")
 
     grad_out = (torch.randn(num_expand, hidden) * 0.1).to(torch.float32)
     weight = torch.rand(num_tokens, num_topk).to(torch.float32)
@@ -41,7 +42,7 @@ def test_swiglu_backward_and_per_token_cast():
             num_per_channels=num_per_channels, swiglu_clamp_value=None,
         )
     except (RuntimeError, TypeError) as e:
-        pytest.xfail(f"CPU swiglu_backward failed (compile issue): {e}")
+        pytest.xfail(f"CPU swiglu_backward failed: {e}")
 
     x_q_npu, x_sf_npu = x_q.npu(), x_sf.npu()
     grad_out_npu, weight_npu = grad_out.npu(), weight.npu()
@@ -59,3 +60,14 @@ def test_swiglu_backward_and_per_token_cast():
     torch.testing.assert_close(out_npu.cpu(), out_cpu, atol=1e-3, rtol=1e-3)
     torch.testing.assert_close(x_grad_npu.cpu(), x_grad_cpu, atol=1e-3, rtol=1e-3)
     torch.testing.assert_close(w_grad_npu.cpu(), w_grad_cpu, atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
+def test_swiglu_backward_and_per_token_cast_aclnn():
+    from tile_kernels_ascend.aclnn.quant import swiglu_backward_and_per_token_cast
+    x_data = torch.randn(32, 256, dtype=torch.bfloat16).npu()
+    x_sf = torch.randn(32, 2, dtype=torch.float32).npu()
+    grad_out = torch.randn(32, 128, dtype=torch.float32).npu()
+    weight = torch.randn(8, 4, dtype=torch.float32).npu()
+    with pytest.raises(NotImplementedError):
+        swiglu_backward_and_per_token_cast((x_data, x_sf), grad_out, weight)

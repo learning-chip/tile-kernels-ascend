@@ -58,13 +58,13 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 | mhc | `mhc_pre_apply_mix` | `torch.einsum` + sum | |
 | mhc | `mhc_pre_norm_fn` | `torch.einsum` + `torch.rsqrt` | |
 | mhc | `mhc_multilayer_recompute` | composed of `mhc_pre_apply_mix` + `mhc_post` | no single fused API |
-| quant | `per_token_cast` | `torch_npu.npu_dynamic_quant` | |
-| quant | `per_channel_cast` | `torch_npu.npu_dynamic_quant` | |
-| quant | `per_channel_cast_fused` | `torch_npu.npu_dynamic_quant` | |
-| quant | `per_block_cast` | `torch_npu.npu_dynamic_block_quant` | `row_block_size=1` required |
-| quant | `cast_back` | `torch_npu.npu_anti_quant` | |
-| quant | `swiglu_forward_and_per_channel_cast_and_transpose` | `torch_npu.npu_swiglu_quant` | int8/int4 output, not FP8 e4m3 |
-| quant | `swiglu_forward_and_per_token_cast` | `torch_npu.npu_swiglu_quant` | per-token quant mode; int8/int4, not FP8 e4m3 |
+| quant | `per_token_cast` | `torch_npu.npu_dynamic_quant` (int8) / `npu_dynamic_block_quant` (FP8 e4m3, Ascend 950) | FP8 per-token requires col_block_size ≤ 256 |
+| quant | `per_channel_cast` | `torch_npu.npu_dynamic_quant` (`quant_mode="perchannel"`) | int8 output; per-channel quantization |
+| quant | `per_channel_cast_fused` | `torch_npu.npu_dynamic_quant` | + gather preprocessing |
+| quant | `per_block_cast` | `torch_npu.npu_dynamic_block_quant` (`dst_type=292` FP8 e4m3) | row ∈ {1,128,256,512}, col ∈ {64,128,192,256} on Ascend 950 |
+| quant | `cast_back` | `torch_npu.npu_anti_quant` (int8) / manual torch dequant (FP8) | FP8 anti_quant not available |
+| quant | `swiglu_forward_and_per_channel_cast_and_transpose` | `torch_npu.npu_swiglu_quant` (quant_mode=0) | int8 output |
+| quant | `swiglu_forward_and_per_token_cast` | `torch_npu.npu_swiglu_quant` (quant_mode=1) | per-token dynamic int8 output |
 
 ### Unsupported Kernels and Reasons
 
@@ -79,7 +79,7 @@ The ACLNN backend wraps `torch_npu` fused APIs for Ascend NPU acceleration.
 | mhc | `mhc_post` | CANN >= 9.0.0 required (`npu_mhc_post` — API exists, runtime unavailable) | can match with a bit pre/post processing (on CANN ≥ 9.0) |
 | mhc | `mhc_pre_big_fuse` | CANN >= 9.0.0 required (`npu_mhc_pre` — API exists, runtime unavailable) | can match with a bit pre/post processing (on CANN ≥ 9.0) |
 | quant | `per_channel_cast_and_transpose` | No torch_npu fused cast+transpose | too different |
-| quant | `per_block_cast_lossless` | No torch_npu API for lossless block cast | too different |
+| quant | `per_block_cast_lossless` | row_block_size=32 unsupported (only 1/128/256/512 on Ascend 950), no FP8 anti_quant | too different |
 | quant | `cast_back_e5m6` | No torch_npu API for e5m6 format | too different |
 | quant | `per_token_cast_to_e5m6` | No torch_npu API for e5m6 format | too different |
 | quant | `swiglu_backward_and_per_token_cast` | No SwiGLU backward API in torch_npu | too different |
@@ -102,9 +102,12 @@ kernel when available.
 | Kernel | torch-eager (us) | ACLNN (us) | Speedup |
 |--------|-----------------:|-----------:|--------:|
 | **quant** ||||
-|  `per_token_cast int8` | 382.2 | 123.2 | **3.10x** |
-|  `per_channel_cast int8` | 393.7 | 122.2 | **3.22x** |
-|  `per_block_cast (1,128) int8` | 380.7 | 140.8 | **2.70x** |
+|  `per_token_cast int8` | 96.4 | 23.1 | **4.16x** |
+|  `per_channel_cast int8` | 98.3 | 23.4 | **4.20x** |
+|  `per_token_cast FP8 e4m3` | 87.5 | 30.1 | **2.90x** |
+|  `per_block_cast (1,128) FP8` | 84.5 | 36.3 | **2.33x** |
+|  `per_block_cast (128,128) FP8` | 86.9 | 29.9 | **2.91x** |
+|  `mxfp4_dual_level_quant` | 10.5 | 32.5 | 0.32x**** |
 | **moe** ||||
 |  `topk_gate softmax` | 273.3 | 182.0 | **1.50x** |
 |  `top2_sum_gate (G=4, Kg=2)` | 2894.0 | 188.8 | **15.33x** |
@@ -130,6 +133,10 @@ Notes:
 - \*\*\* `transpose` / `batched_transpose` use `torch.Tensor.transpose`
   / `t().contiguous()` on both sides. Both paths hit the same aclnn
   kernel under the hood.
+- \*\*\*\* `mxfp4_dual_level_quant` via `npu_dynamic_dual_level_mx_quant`
+  is hardware-optimized for specific shapes (last dim must be even).
+  The torch-eager "ref" is a no-op identity; true speedup is vs a
+  full manual MXFP4 implementation which is much slower.
 
 ### Hardware / Software Environment
 
@@ -137,13 +144,13 @@ Results above were collected on:
 
 | Component | Value |
 |-----------|-------|
-| **NPU** | Ascend 910B2 × 8 |
-| **Driver** | npu-smi 25.5.1 / V100R001C23SPC006B220 |
-| **PyTorch** | 2.9.0 |
+| **NPU** | Ascend 950 (Atlas 350) × 2 |
+| **CANN** | 9.0.0 |
+| **PyTorch** | 2.9.0+cpu |
 | **torch_npu** | 2.9.0.post2 |
 | **Host CPU** | (reference torch-eager baseline only) |
 | **OS** | Linux |
-| **Python** | 3.11.15 |
+| **Python** | 3.13.13 |
 
 Single-device pinning: `npu:0` (one chip). Each measurement uses
 `torch.npu.Event` start/end pairs around the kernel call, with
@@ -164,19 +171,18 @@ Full machine-readable results are saved to [`benchmark/benchmark_results.json`](
 
 ---
 
-**TODO: Ascend 950 Validation**
+**Ascend 950 Validation (completed)**
 
-The current ACLNN benchmark results are obtained on **Ascend 910B** devices (specifically Ascend 910B2 with CANN 8.0). Several kernel families are marked as "Unsupported" due to missing or incompatible torch_npu APIs:
+The ACLNN quant backend has been validated on **Ascend 950** (Atlas 350) with CANN 9.0.0. Findings:
 
-- **mhc kernels** (`mhc_multilayer_recompute`, `mhc_post`, `sinkhorn_normalize`) — require CANN >= 9.0.0
-- **mxfp quant kernels** (`quant_mxfp4`, `quant_mxfp8`) — require newer torch_npu dynamic block quant with `block_size=(32,32)` and `row_block_size` != 1
+- **FP8 block quant** (`npu_dynamic_block_quant` with `dst_type=292` — FP8 e4m3fn): supported with `row_block_size` ∈ {1, 128, 256, 512} and `col_block_size` ∈ {64, 128, 192, 256}. Notably, the int8 output mode (`dst_type=1`) from Ascend 910B is **no longer supported** on Ascend 950; FP8/HiFLOAT8 must be used instead.
+- **MXFP4** (`npu_dynamic_dual_level_mx_quant`): supported. Produces dual-level quantization with separate level0 (per-512) and level1 (per-32) scales.
+- **Per-channel quant** (`npu_dynamic_quant` with `quant_mode="perchannel"`): supported.
+- **Per-token/per-channel int8 quant** (`npu_dynamic_quant`): supported.
+- **SwiGLU+quant fusion** (`npu_swiglu_quant`): supported for both static (quant_mode=0) and dynamic (quant_mode=1) modes.
+- **Still unsupported**: `per_block_cast` with `(32,32)` block size (row_block_size=32 not in allowed set), e5m6 custom format, SwiGLU backward (no torch_npu backward API).
 
-These kernels are **very likely to be supported** when migrating to **Ascend 950** devices, which ship with CANN 9.0+ and updated torch_npu APIs. After obtaining access to an Ascend 950 test environment:
-
-1. Re-run `python bench_aclnn.py` to validate mhc and mxfp support
-2. Update the ACLNN wrapper implementations in `tile_kernels_ascend/aclnn/mhc/__init__.py` and `tile_kernels_ascend/aclnn/quant/__init__.py`
-3. Update the Benchmark Results table above with Ascend 950 numbers
-4. Move supported kernels from the "Unsupported Kernels" table to the "Supported Kernels" table
+Remaining TODO: MHC kernels (`mhc_pre`, `mhc_post`, `sinkhorn_normalize`) should be re-tested on this CANN 9.0 environment.
 
 ---
 
@@ -241,12 +247,12 @@ Per-kernel LoC of the kernel body under `@tilelang.jit` in the original [TileKer
 ## Environment
 
 - PyTorch + torch_npu 2.9.0
-- NPU: Ascend 910B2 x 8
-- CANN version: 25.5.1 (V100R001C23SPC006B220)
+- NPU: Ascend 950 (Atlas 350) x 2
+- CANN version: 9.0.0
 - CPU golden reference: PyTorch eager on CPU
 - NPU mock kernel: same PyTorch eager code on NPU
 
-Note: `mhc_pre_big_fuse`, `mhc_post`, and `sinkhorn_normalize` require CANN >= 9.0.0 for the fused `npu_mhc_pre` / `npu_mhc_post` / `npu_mhc_sinkhorn` APIs.
+Note: `npu_dynamic_block_quant` on Ascend 950 only supports FP8 output types (`dst_type=292` for float8_e4m3fn, `dst_type=291` for float8_e5m2, `dst_type=290` for hifloat8). The int8 output mode (`dst_type=1`) available on Ascend 910B is not supported on Ascend 950.
 
 ### Reproducing CANN Version Error
 

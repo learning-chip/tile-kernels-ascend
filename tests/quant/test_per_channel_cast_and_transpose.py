@@ -28,3 +28,13 @@ def test_per_channel_cast_and_transpose():
 
     torch.testing.assert_close(out_w_t_npu, out_w_t_cpu)
     torch.testing.assert_close(sf_t_npu, sf_t_cpu, atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
+def test_per_channel_cast_and_transpose_aclnn():
+    from tile_kernels_ascend.aclnn.quant import per_channel_cast_and_transpose
+    num_tokens, hidden = 64, 64
+    torch.manual_seed(100)
+    x_npu = torch.randn(num_tokens, hidden, dtype=torch.bfloat16).npu()
+    with pytest.raises(NotImplementedError):
+        per_channel_cast_and_transpose(x_npu)
