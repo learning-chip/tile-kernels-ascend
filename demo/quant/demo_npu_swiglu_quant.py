@@ -108,13 +108,8 @@ def demo_dynamic_per_token_with_groups():
     group_size = num_tokens // num_groups
 
     x = torch.randn(num_tokens, hidden2, dtype=torch.float32, device="npu")
-    # smooth_scales: one row per group, one col per channel (N)
     smooth_scales = torch.randn(num_groups, N, dtype=torch.float32, device="npu")
-    # cumsum of token counts per group (monotonically increasing, last = num_tokens)
-    group_index = torch.tensor(
-        [(i + 1) * group_size for i in range(num_groups)],
-        dtype=torch.int32, device="npu"
-    )
+    group_index = torch.arange(1, num_groups + 1, dtype=torch.int32, device="npu") * group_size
 
     out, scale = torch_npu.npu_swiglu_quant(
         x,
@@ -148,10 +143,7 @@ def demo_static_per_channel_with_groups():
     x = torch.randn(num_tokens, hidden2, dtype=torch.float32, device="npu")
     smooth_scales = torch.randn(num_groups, N, dtype=torch.float32, device="npu")
     offsets = torch.randn(num_groups, N, dtype=torch.float32, device="npu")
-    group_index = torch.tensor(
-        [(i + 1) * group_size for i in range(num_groups)],
-        dtype=torch.int32, device="npu"
-    )
+    group_index = torch.arange(1, num_groups + 1, dtype=torch.int32, device="npu") * group_size
 
     out, scale = torch_npu.npu_swiglu_quant(
         x,
@@ -185,7 +177,6 @@ def demo_group_list_type_count():
 
     x = torch.randn(num_tokens, hidden2, dtype=torch.float32, device="npu")
     smooth_scales = torch.randn(num_groups, N, dtype=torch.float32, device="npu")
-    # count mode: each group has `group_size` tokens
     group_index = torch.full((num_groups,), group_size, dtype=torch.int32, device="npu")
 
     out, scale = torch_npu.npu_swiglu_quant(

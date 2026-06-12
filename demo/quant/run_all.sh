@@ -4,7 +4,7 @@
 #
 # Each demo is independent and can also be run individually, e.g.:
 #   source /usr/local/Ascend/cann-9.0.0/set_env.sh
-#   task-submit --device 1 --run "python demo/quant/demo_npu_dynamic_quant.py"
+#   task-submit --device 0 --run "python demo/quant/demo_npu_dynamic_quant.py"
 
 set -e
 
@@ -26,7 +26,7 @@ for demo in "${DEMOS[@]}"; do
   echo "============================================"
   echo "Running: $demo"
   echo "============================================"
-  task-submit --device 1 --run "python $SCRIPT_DIR/$demo"
+  task-submit --device 0 --run "python $SCRIPT_DIR/$demo"
   echo ""
 done
 

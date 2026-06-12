@@ -10,54 +10,32 @@ What it does:
     Returns (y_quantized, scale_per_block).
 
 Common usage patterns:
-    1. INT8 per-row-block (1, 128)  — row-wise INT8 quant
-    2. FP8  e4m3 per-token (1, N)   — per-token FP8 quant (used by per_token_cast)
-    3. FP8  e4m3 per-block (R, C)   — tile-wise FP8 quant (used by per_block_cast)
+    1. FP8  e4m3 per-token  (1, hidden)   — per-token FP8 quant (used by per_token_cast)
+    2. FP8  e4m3 per-block  (R, C)        — tile-wise FP8 quant (used by per_block_cast)
+    3. FP8  e4m3 large hidden             — multi-chunk per-token when hidden > 128
 
 dst_type values:
-    1   = INT8       (default)
-    292 = FP8 e4m3fn (torch.float8_e4m3fn)
+    292   = FP8 e4m3fn           (torch.float8_e4m3fn, primary usage on Ascend 950)
+    Other values (HiFLOAT8, FP8 e5m2) exist but the enum IDs are version-specific.
+
+On Ascend 950, only FP8-type outputs (FP8_E4M3FN, FP8_E5M2, HiFLOAT8) are
+supported — INT8 output is NOT available for npu_dynamic_block_quant.
+Only 2-D inputs are supported; 3-D is not accepted.
 
 Signature:
     torch_npu.npu_dynamic_block_quant(
         x, *, min_scale=0.0, round_mode="rint",
         dst_type=1, row_block_size=1, col_block_size=128,
     ) -> (Tensor, Tensor)
-
-Constraints (on Ascend 950):
-    - row_block_size: 1 (most common), 128, or other powers of 2
-    - col_block_size: usually 128
-    - x must be 2-D or 3-D
 """
 
 import torch
 import torch_npu
 
 
-def demo_int8_per_row_block():
-    """
-    Pattern 1: INT8 per-row block quant with col_block_size=128.
-    Each (1 x 128) block gets its own scale.
-    If the last dim is not divisible by 128, the API pads internally.
-    """
-    torch.manual_seed(0)
-    rows, cols = 8, 256  # cols must be divisible by 128
-    x = torch.randn(rows, cols, dtype=torch.float16, device="npu")
-
-    out, scale = torch_npu.npu_dynamic_block_quant(
-        x, row_block_size=1, col_block_size=128, dst_type=1
-    )
-
-    assert out.dtype == torch.int8
-    assert out.shape == x.shape
-    # one scale per (row, block-of-128-cols)
-    assert scale.shape == (rows, cols // 128)
-    print("[INT8 (1,128)]    out.shape:", out.shape, " scale.shape:", scale.shape)
-
-
 def demo_fp8_per_token():
     """
-    Pattern 2: FP8 e4m3 per-token quant (row_block_size=1, col_block_size=hidden).
+    Pattern 1: FP8 e4m3 per-token quant (row_block_size=1, col_block_size=hidden).
     Used by per_token_cast(fmt='e4m3') in tile-kernels-ascend.
     Each row is quantized independently to FP8 e4m3fn format.
 
@@ -74,12 +52,12 @@ def demo_fp8_per_token():
     assert out.dtype == torch.float8_e4m3fn
     assert out.shape == x.shape
     assert scale.shape == (num_tokens, 1)
-    print("[FP8 per-token]   out.dtype:", out.dtype, " scale.shape:", scale.shape)
+    print("[FP8 per-token]    out.dtype:", out.dtype, " scale.shape:", scale.shape)
 
 
 def demo_fp8_per_block():
     """
-    Pattern 3: FP8 e4m3 per-block quant (e.g. block_size=(128, 128)).
+    Pattern 2: FP8 e4m3 per-block quant (e.g. block_size=(128, 128)).
     Used by per_block_cast(block_size=(128, 128), fmt='e4m3') in tile-kernels-ascend.
     Each (128 x 128) tile is quantized independently.
     """
@@ -94,16 +72,14 @@ def demo_fp8_per_block():
 
     assert out.dtype == torch.float8_e4m3fn
     assert out.shape == (h, w)
-    # scale shape = (h/row_bs, w/col_bs)
     assert scale.shape == (h // row_bs, w // col_bs)
     print(f"[FP8 per-block({row_bs},{col_bs})]  out.shape:", out.shape, " scale.shape:", scale.shape)
 
 
 def demo_fp8_per_token_large_hidden():
     """
-    When hidden > 256, per_token_cast caps col_block_size at 128
-    (to avoid exceeding hardware limits). This effectively becomes
-    per-(token, 128-chunk) quant, with multiple scales per token.
+    Pattern 3: When hidden > 256, per_token_cast caps col_block_size at 128.
+    This becomes per-(token, 128-chunk) quant, with multiple scales per token.
     """
     torch.manual_seed(3)
     num_tokens, hidden = 16, 512
@@ -116,50 +92,91 @@ def demo_fp8_per_token_large_hidden():
 
     assert out.dtype == torch.float8_e4m3fn
     assert out.shape == (num_tokens, hidden)
-    # multiple scale chunks per token
     assert scale.shape == (num_tokens, hidden // col_bs)
     print(f"[FP8 large hid={hidden}] col_bs={col_bs}  scale.shape:", scale.shape)
 
 
-def demo_3d_input_int8():
+def demo_fp8_row_block_size_1_col_128():
     """
-    3-D input (batch, seq, hidden) is flattened over leading dims:
-    treated as (batch*seq, hidden) internally, then reshaped back.
+    Pattern 4: the most common (and currently only supported on Ascend 950)
+    configuration — row_block_size=1, col_block_size=128.
+    Works with any 2-D input whose width is a multiple of 128.
     """
     torch.manual_seed(4)
-    x = torch.randn(2, 16, 128, dtype=torch.float16, device="npu")
+    x = torch.randn(64, 128, dtype=torch.float16, device="npu")
 
     out, scale = torch_npu.npu_dynamic_block_quant(
-        x, row_block_size=1, col_block_size=128, dst_type=1
+        x, row_block_size=1, col_block_size=128, dst_type=292
     )
 
-    assert out.dtype == torch.int8
+    assert out.dtype == torch.float8_e4m3fn
     assert out.shape == x.shape
-    print("[3D INT8]       out.shape:", out.shape, " scale.shape:", scale.shape)
+    assert scale.shape == (64, 1)
+    print("[FP8 (1,128) fp16] out.shape:", out.shape, " scale.shape:", scale.shape)
 
 
-def demo_min_scale():
+def demo_fp8_min_scale():
     """
-    min_scale parameter: a lower bound on the computed scale, used to
-    avoid division by very small numbers (and thus overflowing quantized values).
-    scale = min(DTYPE_MAX / block_max,  1 / min_scale)  when min_scale > 0
+    Pattern 5: min_scale parameter — a lower bound on the computed scale,
+    used to avoid overflow when block values are very small.
+    scale = min(FP8_MAX / block_max,  1 / min_scale)  when min_scale > 0
     """
     torch.manual_seed(5)
-    x = torch.randn(4, 128, dtype=torch.float16, device="npu") * 0.001  # tiny values
+    x = torch.randn(4, 128, dtype=torch.bfloat16, device="npu") * 0.001
 
     out, scale = torch_npu.npu_dynamic_block_quant(
-        x, min_scale=1e-3, row_block_size=1, col_block_size=128, dst_type=1
+        x, min_scale=1e-3, row_block_size=1, col_block_size=128, dst_type=292
     )
 
-    assert out.dtype == torch.int8
-    print("[min_scale]     scale min bounded, min scale:", scale.min().item())
+    assert out.dtype == torch.float8_e4m3fn
+    print("[FP8 min_scale]   scale min bounded, min scale:", scale.min().item())
+
+
+def demo_hifloat8_output():
+    """
+    HiFLOAT8 output — an 8-bit float with larger exponent range
+    than standard FP8 e4m3fn. Supported on Ascend 950.
+    The dst_type value for HiFLOAT8 is device/version specific; check
+    your CANN version to find the correct enum value.
+    """
+    torch.manual_seed(6)
+    x = torch.randn(4, 128, dtype=torch.bfloat16, device="npu")
+
+    try:
+        out, scale = torch_npu.npu_dynamic_block_quant(
+            x, row_block_size=1, col_block_size=128, dst_type=129
+        )
+        assert out.shape == x.shape
+        print("[HiFLOAT8]        out.shape:", out.shape, " out.dtype:", out.dtype)
+    except (RuntimeError, ValueError):
+        print("[HiFLOAT8]        SKIPPED (dst_type=129 not supported in current CANN)")
+
+
+def demo_fp8_e5m2_output():
+    """
+    FP8 e5m2 output (dst_type=130) — 5-bit exponent, 2-bit mantissa.
+    Greater dynamic range but less precision than e4m3fn.
+    Note: support for this dst_type value varies across CANN versions.
+    """
+    torch.manual_seed(7)
+    x = torch.randn(4, 128, dtype=torch.bfloat16, device="npu")
+
+    try:
+        out, scale = torch_npu.npu_dynamic_block_quant(
+            x, row_block_size=1, col_block_size=128, dst_type=130
+        )
+        assert out.shape == x.shape
+        print("[FP8 e5m2]        out.shape:", out.shape, " out.dtype:", out.dtype)
+    except (RuntimeError, ValueError):
+        print("[FP8 e5m2]        SKIPPED (dst_type=130 not supported in current CANN)")
 
 
 if __name__ == "__main__":
-    demo_int8_per_row_block()
     demo_fp8_per_token()
     demo_fp8_per_block()
     demo_fp8_per_token_large_hidden()
-    demo_3d_input_int8()
-    demo_min_scale()
+    demo_fp8_row_block_size_1_col_128()
+    demo_fp8_min_scale()
+    demo_hifloat8_output()
+    demo_fp8_e5m2_output()
     print("\nAll npu_dynamic_block_quant demos passed!")
