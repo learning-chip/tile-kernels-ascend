@@ -10,3 +10,11 @@ benchmark_results*.jsonl
 extra-info/
 data-dump/
 ge_check_op.json
+
+# CANN simulator outputs (cannsim record)
+sim_outputs/
+cannsim_*/
+instr.bin
+log_ca/
+route_table.txt
+rtb_debug.txt
